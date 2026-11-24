@@ -887,6 +887,21 @@
             const pitchSign = devicePitchDeg >= 0 ? '+' : '';
             els.valDeviceAim.textContent = `${Math.round(deviceAzDeg)}° ${getCardinal16(deviceAzDeg)} / ${pitchSign}${Math.round(devicePitchDeg)}°`;
 
+            // 確保畫布尺寸有效並清除上一幀畫面
+            if (canvasSize <= 10) {
+                resizeCanvas();
+            }
+            ctx.clearRect(0, 0, canvasSize, canvasSize);
+
+            // 依據目前模式繪製圓盤儀表並更新上方方向引導文字
+            if (canvasSize > 10) {
+                if (state.mode === 'aim') {
+                    drawAimMode(moonDev, upDev, deviceAzDeg, devicePitchDeg, m);
+                } else {
+                    drawCompassMode(deviceAzDeg, m);
+                }
+            }
+
             // 更新次要狀態列（保留錯誤與 Safari 權限診斷訊息，不再強行覆寫）
             if (state.sensorActive) {
                 els.subStatus.textContent = `${state.sensorModeLabel} · ${state.locationSource}`;
