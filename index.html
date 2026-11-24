@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>月位 — 極簡月亮定位工具</title>
+    <!-- 載入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 使用簡潔無襯線與等寬字體，確保數值跳動時不晃動 */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        html, body {
+            background-color: #000000;
+            color: #e4e4e7;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .font-mono-num {
+            font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-variant-numeric: tabular-nums;
+        }
+
+        canvas {
+            touch-action: none;
+            display: block;
+        }
+    </style>
+</head>
+<body class="h-[100dvh] w-full flex flex-col justify-between bg-black text-zinc-200 select-none overflow-hidden">
+
+    <!-- 頂部狀態與控制列 -->
+    <header class="w-full px-4 py-3 border-b border-zinc-900 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2.5">
+            <!-- 感測器運作狀態指示燈 -->
+            <span id="sensor-dot" class="w-2 h-2 rounded-full bg-zinc-600 transition-colors"></span>
+            <h1 class="text-sm font-medium tracking-wider text-zinc-100">月位</h1>
+            <span id="coord-label" class="text-xs font-mono-num text-zinc-500 hidden sm:inline">25.03°N, 121.57°E</span>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- 顯示模式切換：舉起對準 / 平放羅盤 -->
+            <div class="flex bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs">
+                <button id="btn-mode-aim" class="px-2.5 py-1.5 rounded-md bg-zinc-800 text-zinc-100 font-medium transition-colors">對準</button>
+                <button id="btn-mode-compass" class="px-2.5 py-1.5 rounded-md text-zinc-500 hover:text-zinc-300 transition-colors">羅盤</button>
+            </div>
+            <!-- 定位與校正設定按鈕 -->
+            <button id="btn-open-settings" class="px-2.5 py-1.5 text-xs rounded-lg border border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700 transition-colors">
+                設定
+            </button>
+        </div>
+    </header>
+
+    <!-- 中央主要儀表區 -->
+    <main class="flex-1 w-full flex flex-col items-center justify-center px-4 py-2 min-h-0 relative">
+        <!-- 圓形畫布容器 -->
+        <div id="canvas-container" class="w-full max-w-[340px] aspect-square relative flex items-center justify-center">
+            <canvas id="sky-canvas" class="w-full h-full"></canvas>
+        </div>
+
+        <!-- 簡潔引導提示文字 -->
+        <div class="mt-3 text-center min-h-[44px] flex flex-col items-center justify-center">
+            <p id="guidance-text" class="text-sm font-mono-num tracking-wide text-zinc-300">準備中...</p>
+            <p id="sub-status" class="text-[11px] text-zinc-500 mt-0.5">可點擊下方按鈕啟用手機感測器與定位</p>
+        </div>
+
+        <!-- 啟用手機感測器按鈕（支援 iOS 權限請求與一鍵 GPS 定位） -->
+        <div id="sensor-cta-wrap" class="mt-2">
+            <button id="btn-start-sensors" class="px-4 py-2.5 rounded-lg bg-zinc-100 text-black text-xs font-medium tracking-wide active:bg-zinc-300 transition-colors">
+                啟用手機感測器與定位
+            </button>
+        </div>
+    </main>
+
+    <!-- 底部即時數值面板（極簡格線） -->
+    <footer class="w-full border-t border-zinc-900 bg-black shrink-0">
+        <div class="max-w-md mx-auto grid grid-cols-2 divide-x divide-zinc-900 border-b border-zinc-900">
+            <!-- 月亮方位角 -->
+            <div class="px-4 py-2.5">
+                <div class="text-[11px] text-zinc-500">月亮方位</div>
+                <div class="mt-0.5 flex items-baseline gap-1.5">
+                    <span id="val-moon-az" class="text-base font-mono-num text-zinc-100">--.-°</span>
+                    <span id="val-moon-dir" class="text-xs text-zinc-400">--</span>
+                </div>
+            </div>
+            <!-- 月亮仰角 -->
+            <div class="px-4 py-2.5">
+                <div class="text-[11px] text-zinc-500">月亮仰角</div>
+                <div class="mt-0.5 flex items-baseline gap-1.5">
+                    <span id="val-moon-alt" class="text-base font-mono-num text-zinc-100">--.-°</span>
+                    <span id="val-moon-vis" class="text-xs text-zinc-400">--</span>
+                </div>
+            </div>
+        </div>
+        <div class="max-w-md mx-auto grid grid-cols-2 divide-x divide-zinc-900">
+            <!-- 手機目前指向 -->
+            <div class="px-4 py-2.5">
+                <div class="text-[11px] text-zinc-500">手機指向</div>
+                <div id="val-device-aim" class="mt-0.5 text-xs font-mono-num text-zinc-300">--° / --°</div>
+            </div>
+            <!-- 月相與距離 -->
+            <div class="px-4 py-2.5">
+                <div class="text-[11px] text-zinc-500">月相 / 距離</div>
+                <div id="val-moon-phase" class="mt-0.5 text-xs font-mono-num text-zinc-300">--</div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- 設定面板（定位與方位微調，預設隱藏） -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50 hidden">
+        <div class="w-full max-w-sm bg-zinc-950 border border-zinc-800 rounded-xl p-5 space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-sm font-medium text-zinc-100">定位與感測器設定</h2>
+                <button id="btn-close-settings" class="text-xs text-zinc-500 hover:text-zinc-200 px-2 py-1">關閉</button>
+            </div>
+
+            <!-- GPS 定位按鈕 -->
+            <div class="space-y-2">
+                <div class="flex items-center justify-between text-xs">
+                    <span class="text-zinc-400">目前座標</span>
+                    <span id="modal-gps-status" class="text-zinc-500">預設座標</span>
+                </div>
+                <button id="btn-refresh-gps" class="w-full py-2.5 rounded-lg border border-zinc-700 text-xs text-zinc-200 hover:bg-zinc-900 active:bg-zinc-800 transition-colors">
+                    重新取得 GPS 定位
+                </button>
+            </div>
+
+            <!-- 手動輸入經緯度 -->
+            <div class="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                    <label for="input-lat" class="block text-[11px] text-zinc-500 mb-1">緯度 (-90 ~ 90)</label>
+                    <input id="input-lat" type="number" step="0.0001" class="w-full bg-black border border-zinc-800 rounded-lg px-2.5 py-2 text-xs font-mono-num text-zinc-100 focus:outline-none focus:border-zinc-500">
+                </div>
+                <div>
+                    <label for="input-lng" class="block text-[11px] text-zinc-500 mb-1">經度 (-180 ~ 180)</label>
+                    <input id="input-lng" type="number" step="0.0001" class="w-full bg-black border border-zinc-800 rounded-lg px-2.5 py-2 text-xs font-mono-num text-zinc-100 focus:outline-none focus:border-zinc-500">
+                </div>
+            </div>
+
+            <!-- 羅盤磁偏角/誤差微調 -->
+            <div class="space-y-1.5 pt-1">
+                <div class="flex items-center justify-between text-xs">
+                    <label for="input-offset" class="text-zinc-400">方位微調（磁偏角補償）</label>
+                    <span id="val-offset-label" class="font-mono-num text-zinc-300">0°</span>
+                </div>
+                <input id="input-offset" type="range" min="-30" max="30" step="1" value="0" class="w-full accent-zinc-200">
+            </div>
+
+            <!-- 套用與說明 -->
+            <div class="pt-2 flex gap-2">
+                <button id="btn-apply-settings" class="flex-1 py-2.5 rounded-lg bg-zinc-100 text-black text-xs font-medium active:bg-zinc-300 transition-colors">
+                    套用座標
+                </button>
+            </div>
+            <p class="text-[11px] text-zinc-500 leading-relaxed">
+                若手機羅盤飄移，可將手機在空中畫「8」字形校正。對準模式請將手機背面朝向天空；羅盤模式請將手機水平放置。
+            </p>
+            <!-- 極簡感測器診斷狀態（協助排錯 Safari 權限與數值） -->
+            <div class="pt-2 border-t border-zinc-900 text-[11px] font-mono-num text-zinc-500 break-all">
+                感測器狀態：<span id="modal-sensor-diag" class="text-zinc-400">尚未啟用</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ==========================================
+         * 1. 天文演算法模組（計算月亮方位、仰角、月相）
+         * 參考 Jean Meeus 與 SunCalc 低誤差演算法，並加入月球地心視差修正
+         * ==========================================
+         */
+        const RAD = Math.PI / 180;
+        const DEG = 180 / Math.PI;
+        const DAY_MS = 1000 * 60 * 60 * 24;
+        const J1970 = 2440588;
+        const J2000 = 2451545;
+        const OBLIQUITY = RAD * 23.4397; // 黃赤交角
+
+        function toJulian(date) {
+            return date.valueOf() / DAY_MS - 0.5 + J1970;
+        }
+
+        function toDays(date) {
+            return toJulian(date) - J2000;
+        }
+
+        function rightAscension(l, b) {
+            return Math.atan2(
+                Math.sin(l) * Math.cos(OBLIQUITY) - Math.tan(b) * Math.sin(OBLIQUITY),
+                Math.cos(l)
+            );
+        }
+
+        function declination(l, b) {
+            return Math.asin(
+                Math.sin(b) * Math.cos(OBLIQUITY) + Math.cos(b) * Math.sin(OBLIQUITY) * Math.sin(l)
+            );
+        }
+
+        function siderealTime(d, lw) {
+            return RAD * (280.16 + 360.9856235 * d) - lw;
+        }
+
+        function astroRefraction(h) {
+            // 僅在地平線附近及上方進行大氣折射修正
+            if (h < -0.017) return 0;
+            const hc = h < 0 ? 0 : h;
+            return 0.0002967 / Math.tan(hc + 0.00312536 / (hc + 0.08901179));
+        }
+
+        function getSunCoords(d) {
+            const M = RAD * (357.5291 + 0.98560028 * d);
+            const C = RAD * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M));
+            const P = RAD * 102.9372;
+            const L = M + C + P + Math.PI;
+            return {
+                dec: declination(L, 0),
+                ra: rightAscension(L, 0)
+            };
+        }
+
+        function getMoonCoords(d) {
+            const L = RAD * (218.316 + 13.176396 * d); // 黃經
+            const M = RAD * (134.963 + 13.064993 * d); // 平近點角
+            const F = RAD * (93.272 + 13.229350 * d);  // 緯度幅角
+
+            const l = L + RAD * 6.289 * Math.sin(M);   // 經度修正
+            const b = RAD * 5.128 * Math.sin(F);       // 黃緯
+            const dist = 385001 - 20905 * Math.cos(M); // 地月距離（公里）
+
+            return {
+                ra: rightAscension(l, b),
+                dec: declination(l, b),
+                dist: dist
+            };
+        }
+
+        /**
+         * 計算給定時間與經緯度的月亮水平座標與月相
+         * 回傳：
+         *  azimuthDeg: 0°=正北, 90°=正東, 180°=正南, 270°=正西
+         *  altitudeDeg: -90° ~ +90°
+         *  distanceKm: 地月距離
+         *  illumination: 被照亮比例 (0~1)
+         *  phaseName: 中文月相名稱
+         */
+        function computeMoonData(date, lat, lng) {
+            const d = toDays(date);
+            const lw = RAD * -lng;
+            const phi = RAD * lat;
+
+            const m = getMoonCoords(d);
+            const s = getSunCoords(d);
+
+            const H = siderealTime(d, lw) - m.ra;
+
+            // 地心仰角
+            let h = Math.asin(
+                Math.sin(phi) * Math.sin(m.dec) +
+                Math.cos(phi) * Math.cos(m.dec) * Math.cos(H)
+            );
+
+            // 月球地心視差修正（最大約 0.95°）
+            const horizParallax = Math.asin(6371 / m.dist);
+            h -= horizParallax * Math.cos(h);
+
+            // 大氣折射修正
+            h += astroRefraction(h);
+
+            // 方位角（公式原為正南=0，向西為正，轉換為正北=0，順時針為正）
+            const azSouth = Math.atan2(
+                Math.sin(H),
+                Math.cos(H) * Math.sin(phi) - Math.tan(m.dec) * Math.cos(phi)
+            );
+            const azimuthDeg = ((azSouth * DEG + 180) % 360 + 360) % 360;
+            const altitudeDeg = h * DEG;
+
+            // 月相與照明度計算
+            const phiMoon = Math.acos(
+                Math.min(1, Math.max(-1,
+                    Math.sin(s.dec) * Math.sin(m.dec) +
+                    Math.cos(s.dec) * Math.cos(m.dec) * Math.cos(s.ra - m.ra)
+                ))
+            );
+            const sdist = 149598000;
+            const inc = Math.atan2(sdist * Math.sin(phiMoon), m.dist - sdist * Math.cos(phiMoon));
+            const angle = Math.atan2(
+                Math.cos(s.dec) * Math.sin(s.ra - m.ra),
+                Math.sin(s.dec) * Math.cos(m.dec) - Math.cos(s.dec) * Math.sin(m.dec) * Math.cos(s.ra - m.ra)
+            );
+            const illumination = (1 + Math.cos(inc)) / 2;
+            const phase = 0.5 + 0.5 * inc * (angle < 0 ? -1 : 1) / Math.PI;
+
+            return {
+                azimuthDeg,
+                altitudeDeg,
+                distanceKm: m.dist,
+                illumination,
+                phase,
+                phaseName: getPhaseName(phase)
+            };
+        }
+
+        function getPhaseName(phase) {
+            if (phase < 0.03 || phase >= 0.97) return '新月';
+            if (phase < 0.22) return '眉月';
+            if (phase < 0.28) return '上弦月';
+            if (phase < 0.47) return '盈凸月';
+            if (phase < 0.53) return '滿月';
+            if (phase < 0.72) return '虧凸月';
+            if (phase < 0.78) return '下弦月';
+            return '殘月';
+        }
+
+        function getCardinal16(deg) {
+            const dirs = ['北', '北北東', '東北', '東北東', '東', '東南東', '東南', '南南東',
+                          '南', '南南西', '西南', '西南西', '西', '西北西', '西北', '北北西'];
+            return dirs[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+        }
+
+        /**
+         * ==========================================
+         * 2. 3D 方向矩陣與感測器轉換模組
+         * 解決手持仰望天空時常見的歐拉角萬向鎖問題
+         * ==========================================
+         */
+
+        // 將天體水平座標 (Azimuth, Altitude) 轉為世界 ENU 單位向量 (X=東, Y=北, Z=天頂)
+        function azAltToENU(azDeg, altDeg) {
+            const az = azDeg * RAD;
+            const alt = altDeg * RAD;
+            const cosAlt = Math.cos(alt);
+            return [
+                cosAlt * Math.sin(az), // East
+                cosAlt * Math.cos(az), // North
+                Math.sin(alt)          // Up
+            ];
+        }
+
+        // 建立由裝置座標系 (X右, Y上, Z朝使用者) 至世界 ENU 座標系的 3x3 旋轉矩陣
+        // 順序：Rz(alpha) * Rx(beta) * Ry(gamma)
+        function buildDeviceToWorldMatrix(alphaDeg, betaDeg, gammaDeg, screenAngleDeg) {
+            const a = alphaDeg * RAD;
+            const b = betaDeg * RAD;
+            const g = gammaDeg * RAD;
+
+            const cZ = Math.cos(a), sZ = Math.sin(a);
+            const cX = Math.cos(b), sX = Math.sin(b);
+            const cY = Math.cos(g), sY = Math.sin(g);
+
+            // R = Rz(a) * Rx(b) * Ry(g)
+            const m11 = cZ * cY - sZ * sX * sY;
+            const m12 = -sZ * cX;
+            const m13 = cZ * sY + sZ * sX * cY;
+
+            const m21 = sZ * cY + cZ * sX * sY;
+            const m22 = cZ * cX;
+            const m23 = sZ * sY - cZ * sX * cY;
+
+            const m31 = -cX * sY;
+            const m32 = sX;
+            const m33 = cX * cY;
+
+            if (!screenAngleDeg) {
+                return [
+                    m11, m12, m13,
+                    m21, m22, m23,
+                    m31, m32, m33
+                ];
+            }
+
+            // 處理橫螢幕旋轉 R_adj = R * Rz(-screenAngle)
+            const s = -screenAngleDeg * RAD;
+            const cs = Math.cos(s), ss = Math.sin(s);
+            return [
+                m11 * cs + m12 * ss, -m11 * ss + m12 * cs, m13,
+                m21 * cs + m22 * ss, -m21 * ss + m22 * cs, m23,
+                m31 * cs + m32 * ss, -m31 * ss + m32 * cs, m33
+            ];
+        }
+
+        // 對世界座標系施加水平偏航修正 Rz(thetaRad) * R
+        function applyWorldYaw(R, thetaRad) {
+            const c = Math.cos(thetaRad);
+            const s = Math.sin(thetaRad);
+            return [
+                c * R[0] - s * R[3], c * R[1] - s * R[4], c * R[2] - s * R[5],
+                s * R[0] + c * R[3], s * R[1] + c * R[4], s * R[2] + c * R[5],
+                R[6],                R[7],                R[8]
+            ];
+        }
+
+        // 將世界向量轉為裝置座標系向量：v_dev = R^T * v_world
+        function worldToDevice(R, v) {
+            return [
+                R[0] * v[0] + R[3] * v[1] + R[6] * v[2],
+                R[1] * v[0] + R[4] * v[1] + R[7] * v[2],
+                R[2] * v[0] + R[5] * v[1] + R[8] * v[2]
+            ];
+        }
+
+        function normalizeVec(v) {
+            const len = Math.hypot(v[0], v[1], v[2]) || 1;
+            return [v[0] / len, v[1] / len, v[2] / len];
+        }
+
+        function wrapAngleRad(rad) {
+            return Math.atan2(Math.sin(rad), Math.cos(rad));
+        }
+
+        function wrapAngleDeg180(deg) {
+            return ((deg + 540) % 360) - 180;
+        }
+
+        /**
+         * ==========================================
+         * 3. 應用程式狀態管理
+         * ==========================================
+         */
+        const state = {
+            // 預設座標（尚未 GPS 定位前使用，可由使用者手動變更）
+            lat: 25.0330,
+            lng: 121.5654,
+            locationSource: '預設座標',
+
+            // 顯示模式：'aim' (舉起對準) | 'compass' (平放羅盤)
+            mode: 'aim',
+
+            // 羅盤額外微調角度（度）
+            manualOffsetDeg: 0,
+
+            // 感測器狀態
+            sensorActive: false,
+            hasAbsoluteEvent: false,
+            sensorModeLabel: '模擬預覽（可拖曳畫面）',
+            statusMessage: '請點擊下方按鈕啟用手機感測器與定位',
+            inIframe: window.self !== window.top,
+            eventCount: 0,
+            lastDiag: '尚未啟用',
+            iosYawOffsetRad: null,
+
+            // 目標 3D 旋轉矩陣（裝置 -> 世界 ENU）
+            rotMatrix: buildDeviceToWorldMatrix(0, 90, 0, 0),
+
+            // 模擬拖曳模式的角度（無感測器時在桌面測試用）
+            simAzDeg: 180,
+            simAltDeg: 25,
+            isDragging: false,
+            lastPointer: { x: 0, y: 0 },
+
+            // 平滑後的向量（避免讀值微幅抖動）
+            smoothMoonDev: [0, 0, -1],
+            smoothUpDev: [0, 1, 0],
+            smoothHeadingRad: 0,
+
+            // 最新月亮天文資料
+            moon: null,
+            lastMoonCalcTime: 0
+        };
+
+        // DOM 元素參照
+        const els = {
+            canvas: document.getElementById('sky-canvas'),
+            canvasWrap: document.getElementById('canvas-container'),
+            sensorDot: document.getElementById('sensor-dot'),
+            coordLabel: document.getElementById('coord-label'),
+            btnModeAim: document.getElementById('btn-mode-aim'),
+            btnModeCompass: document.getElementById('btn-mode-compass'),
+            btnOpenSettings: document.getElementById('btn-open-settings'),
+            btnCloseSettings: document.getElementById('btn-close-settings'),
+            btnStartSensors: document.getElementById('btn-start-sensors'),
+            sensorCtaWrap: document.getElementById('sensor-cta-wrap'),
+            guidanceText: document.getElementById('guidance-text'),
+            subStatus: document.getElementById('sub-status'),
+            valMoonAz: document.getElementById('val-moon-az'),
+            valMoonDir: document.getElementById('val-moon-dir'),
+            valMoonAlt: document.getElementById('val-moon-alt'),
+            valMoonVis: document.getElementById('val-moon-vis'),
+            valDeviceAim: document.getElementById('val-device-aim'),
+            valMoonPhase: document.getElementById('val-moon-phase'),
+            settingsModal: document.getElementById('settings-modal'),
+            modalGpsStatus: document.getElementById('modal-gps-status'),
+            btnRefreshGps: document.getElementById('btn-refresh-gps'),
+            inputLat: document.getElementById('input-lat'),
+            inputLng: document.getElementById('input-lng'),
+            inputOffset: document.getElementById('input-offset'),
+            valOffsetLabel: document.getElementById('val-offset-label'),
+            btnApplySettings: document.getElementById('btn-apply-settings'),
+            modalSensorDiag: document.getElementById('modal-sensor-diag')
+        };
+
+        const ctx = els.canvas.getContext('2d');
+        let canvasSize = 300;
+        let dpr = window.devicePixelRatio || 1;
+
+        /**
+         * ==========================================
+         * 4. 感測器與 GPS 定位處理
+         * ==========================================
+         */
+        function getScreenOrientationAngle() {
+            if (window.screen && window.screen.orientation && typeof window.screen.orientation.angle === 'number') {
+                return window.screen.orientation.angle;
+            }
+            if (typeof window.orientation === 'number') {
+                return window.orientation;
+            }
+            return 0;
+        }
+
+        function handleOrientation(event, isAbsoluteStream) {
+            state.eventCount += 1;
+
+            const hasIosCompass = typeof event.webkitCompassHeading === 'number' && !isNaN(event.webkitCompassHeading);
+            if (event.alpha === null || event.beta === null || event.gamma === null) {
+                state.lastDiag = `收到空值事件 (#${state.eventCount}) · compass:${hasIosCompass ? event.webkitCompassHeading.toFixed(0) : '無'}`;
+                return;
+            }
+
+            // 若裝置支援絕對方向串流，則忽略一般相對串流避免互相覆蓋
+            if (isAbsoluteStream) {
+                state.hasAbsoluteEvent = true;
+            } else if (state.hasAbsoluteEvent) {
+                return;
+            }
+
+            state.lastDiag = `a:${event.alpha.toFixed(0)} b:${event.beta.toFixed(0)} g:${event.gamma.toFixed(0)}` +
+                (hasIosCompass ? ` · N:${event.webkitCompassHeading.toFixed(0)}°` : ` · abs:${Boolean(event.absolute)}`);
+
+            const screenAngle = getScreenOrientationAngle();
+            let R = buildDeviceToWorldMatrix(event.alpha, event.beta, event.gamma, screenAngle);
+
+            // 判斷是否為 iOS Safari（提供 webkitCompassHeading）
+            if (hasIosCompass) {
+                // iOS 的 alpha 是相對起點，透過水平投影將其與 webkitCompassHeading 持續對齊
+                // 選取水平分量較大的軸（平放時 +Y，舉起時 -Z）
+                const m33 = R[8]; // 裝置 Z 軸的垂直分量
+                let refX, refY;
+                if (Math.abs(m33) > 0.65) {
+                    // 平放狀態：參考裝置頂部 (+Y)
+                    refX = R[1];
+                    refY = R[4];
+                } else {
+                    // 舉起狀態：參考手機背面 (-Z)
+                    refX = -R[2];
+                    refY = -R[5];
+                }
+
+                const horizLen = Math.hypot(refX, refY);
+                if (horizLen > 0.25) {
+                    // 相對座標系下的順時針方位角
+                    const relAzRad = Math.atan2(refX, refY);
+                    const trueAzRad = event.webkitCompassHeading * RAD;
+                    // 需將相對座標系繞世界 Z 軸旋轉 targetYaw 使其對齊真北
+                    const targetYaw = wrapAngleRad(relAzRad - trueAzRad);
+
+                    if (state.iosYawOffsetRad === null) {
+                        state.iosYawOffsetRad = targetYaw;
+                    } else if (m33 > -0.25) {
+                        // 僅在未大幅仰翻（避免磁力計翻轉）時平滑更新偏航角
+                        const diff = wrapAngleRad(targetYaw - state.iosYawOffsetRad);
+                        state.iosYawOffsetRad = wrapAngleRad(state.iosYawOffsetRad + diff * 0.08);
+                    }
+                }
+
+                if (state.iosYawOffsetRad !== null) {
+                    R = applyWorldYaw(R, state.iosYawOffsetRad);
+                }
+                state.sensorModeLabel = 'iOS 羅盤感測器運作中';
+            } else if (isAbsoluteStream || event.absolute === true) {
+                state.sensorModeLabel = '絕對方向感測器運作中';
+            } else {
+                state.sensorModeLabel = '相對方向感測器（可能未對齊正北）';
+            }
+
+            // 套用使用者的磁偏角/方位微調（順時針為正 -> 世界座標逆時針旋轉負值）
+            if (state.manualOffsetDeg !== 0) {
+                R = applyWorldYaw(R, -state.manualOffsetDeg * RAD);
+            }
+
+            state.rotMatrix = R;
+
+            if (!state.sensorActive) {
+                state.sensorActive = true;
+                state.statusMessage = '';
+                els.sensorDot.classList.remove('bg-zinc-600');
+                els.sensorDot.classList.add('bg-emerald-500');
+                els.sensorCtaWrap.classList.add('hidden');
+            }
+        }
+
+        function setSensorStatus(msg, diag) {
+            state.statusMessage = msg;
+            if (diag) state.lastDiag = diag;
+        }
+
+        function verifySensorAfterStart() {
+            // 若 2 秒後仍未收到有效硬體數值，保留按鈕供重試並顯示明確原因
+            setTimeout(() => {
+                if (!state.sensorActive) {
+                    els.btnStartSensors.textContent = '重試啟用感測器';
+                    if (state.inIframe) {
+                        setSensorStatus(
+                            '目前處於內嵌預覽視窗，iOS Safari 會封鎖感測器；請以獨立 HTTPS 分頁開啟',
+                            `iframe 環境 · 事件數:${state.eventCount}`
+                        );
+                    } else if (state.eventCount > 0) {
+                        setSensorStatus(
+                            '感測器回傳空值，請確認系統定位與指南針權限',
+                            state.lastDiag
+                        );
+                    } else {
+                        setSensorStatus(
+                            '未收到感測器訊號（可拖曳圓盤預覽，或點設定查看狀態）',
+                            `等待逾時 · secure:${window.isSecureContext}`
+                        );
+                    }
+                }
+            }, 2000);
+        }
+
+        function startSensorsAndLocation() {
+            // 檢查 HTTPS 安全環境（iOS Safari 非 HTTPS 無法存取感測器）
+            if (!window.isSecureContext && location.hostname !== 'localhost') {
+                setSensorStatus(
+                    '請於 HTTPS 網址開啟（Safari 禁止非加密網頁讀取感測器）',
+                    `非安全連線: ${location.protocol}`
+                );
+                return;
+            }
+
+            if (typeof DeviceOrientationEvent === 'undefined') {
+                setSensorStatus('此瀏覽器不支援方向感測器（可拖曳圓盤預覽）', '無 DeviceOrientationEvent');
+                requestGPS();
+                return;
+            }
+
+            // iOS Safari 13+ 必須在點擊事件當下「同步」直接呼叫 requestPermission()
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                setSensorStatus('正在向 Safari 請求動作與方向權限...', '等待 Safari 授權');
+                try {
+                    DeviceOrientationEvent.requestPermission()
+                        .then((permission) => {
+                            if (permission === 'granted') {
+                                bindOrientationListeners();
+                                setSensorStatus('權限已允許，正在接收感測器數據...', 'Safari 已授權，等待訊號');
+                                verifySensorAfterStart();
+                                // 稍微錯開 GPS 權限請求，避免與 Safari 系統彈窗衝突
+                                setTimeout(requestGPS, 350);
+                            } else {
+                                setSensorStatus(
+                                    'Safari 拒絕感測器權限，請重新整理分頁後再按允許',
+                                    `權限結果: ${permission}`
+                                );
+                            }
+                        })
+                        .catch((err) => {
+                            const errMsg = err && err.message ? err.message : String(err);
+                            if (state.inIframe) {
+                                setSensorStatus(
+                                    'Safari 封鎖了內嵌預覽視窗的感測器權限，請改用獨立分頁開啟',
+                                    `iframe 錯誤: ${errMsg}`
+                                );
+                            } else {
+                                setSensorStatus(
+                                    `無法取得 Safari 權限（${errMsg}）`,
+                                    `錯誤: ${errMsg}`
+                                );
+                            }
+                        });
+                } catch (err) {
+                    const errMsg = err && err.message ? err.message : String(err);
+                    setSensorStatus(`權限呼叫失敗（${errMsg}）`, `同步錯誤: ${errMsg}`);
+                }
+            } else {
+                // 非 iOS 或不需要額外請求權限的瀏覽器
+                setSensorStatus('正在監聽方向感測器...', '直接監聽模式');
+                bindOrientationListeners();
+                verifySensorAfterStart();
+                requestGPS();
+            }
+        }
+
+        let listenersBound = false;
+        function bindOrientationListeners() {
+            if (listenersBound) return;
+            listenersBound = true;
+
+            window.addEventListener('deviceorientationabsolute', (e) => handleOrientation(e, true), true);
+            window.addEventListener('deviceorientation', (e) => handleOrientation(e, false), true);
+        }
+
+        function requestGPS() {
+            if (!('geolocation' in navigator)) {
+                updateLocationUI('瀏覽器不支援定位');
+                return;
+            }
+
+            els.modalGpsStatus.textContent = '定位中...';
+            try {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        state.lat = pos.coords.latitude;
+                        state.lng = pos.coords.longitude;
+                        state.locationSource = 'GPS 已定位';
+                        saveSettings();
+                        updateLocationUI('GPS 已定位');
+                        updateMoonNow(true);
+                    },
+                    (err) => {
+                        let msg = '無法取得定位';
+                        if (err.code === 1) msg = '定位權限遭拒';
+                        else if (err.code === 3) msg = '定位逾時';
+                        updateLocationUI(msg + '（使用目前座標）');
+                    },
+                    { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+                );
+            } catch (e) {
+                updateLocationUI('定位呼叫失敗');
+            }
+        }
+
+        function updateLocationUI(statusMsg) {
+            const latStr = `${Math.abs(state.lat).toFixed(2)}°${state.lat >= 0 ? 'N' : 'S'}`;
+            const lngStr = `${Math.abs(state.lng).toFixed(2)}°${state.lng >= 0 ? 'E' : 'W'}`;
+            els.coordLabel.textContent = `${latStr}, ${lngStr}`;
+            els.inputLat.value = state.lat.toFixed(4);
+            els.inputLng.value = state.lng.toFixed(4);
+            if (statusMsg) {
+                els.modalGpsStatus.textContent = statusMsg;
+            }
+        }
+
+        function saveSettings() {
+            try {
+                localStorage.setItem('moon_finder_cfg', JSON.stringify({
+                    lat: state.lat,
+                    lng: state.lng,
+                    offset: state.manualOffsetDeg
+                }));
+            } catch (e) {
+                // 忽略無痕模式或 iFrame 儲存限制
+            }
+        }
+
+        function loadSettings() {
+            try {
+                const raw = localStorage.getItem('moon_finder_cfg');
+                if (raw) {
+                    const cfg = JSON.parse(raw);
+                    if (typeof cfg.lat === 'number' && !isNaN(cfg.lat)) state.lat = cfg.lat;
+                    if (typeof cfg.lng === 'number' && !isNaN(cfg.lng)) state.lng = cfg.lng;
+                    if (typeof cfg.offset === 'number' && !isNaN(cfg.offset)) state.manualOffsetDeg = cfg.offset;
+                    state.locationSource = '已儲存座標';
+                }
+            } catch (e) {
+                // 忽略讀取錯誤
+            }
+            els.inputOffset.value = state.manualOffsetDeg;
+            els.valOffsetLabel.textContent = `${state.manualOffsetDeg > 0 ? '+' : ''}${state.manualOffsetDeg}°`;
+            updateLocationUI(state.locationSource);
+        }
+
+        /**
+         * ==========================================
+         * 5. 模擬拖曳互動（無感測器裝置使用）
+         * ==========================================
+         */
+        function updateSimulatedMatrix() {
+            // 依據模擬方位角 (simAzDeg) 與仰角 (simAltDeg) 建構旋轉矩陣
+            // 當 alpha = -simAzDeg, beta = 90 + simAltDeg 時，裝置 -Z 正好指向 (simAzDeg, simAltDeg)
+            const alpha = ((-state.simAzDeg) % 360 + 360) % 360;
+            const beta = 90 + state.simAltDeg;
+            state.rotMatrix = buildDeviceToWorldMatrix(alpha, beta, 0, 0);
+        }
+
+        function onPointerDown(e) {
+            if (state.sensorActive) return;
+            state.isDragging = true;
+            const pt = e.touches ? e.touches[0] : e;
+            state.lastPointer = { x: pt.clientX, y: pt.clientY };
+        }
+
+        function onPointerMove(e) {
+            if (state.sensorActive || !state.isDragging) return;
+            const pt = e.touches ? e.touches[0] : e;
+            const dx = pt.clientX - state.lastPointer.x;
+            const dy = pt.clientY - state.lastPointer.y;
+            state.lastPointer = { x: pt.clientX, y: pt.clientY };
+
+            if (state.mode === 'aim') {
+                state.simAzDeg = ((state.simAzDeg - dx * 0.45) % 360 + 360) % 360;
+                state.simAltDeg = Math.max(-85, Math.min(85, state.simAltDeg + dy * 0.45));
+            } else {
+                state.simAzDeg = ((state.simAzDeg - dx * 0.5) % 360 + 360) % 360;
+            }
+            updateSimulatedMatrix();
+        }
+
+        function onPointerUp() {
+            state.isDragging = false;
+        }
+
+        /**
+         * ==========================================
+         * 6. 畫布繪製引擎（極簡儀表風格）
+         * ==========================================
+         */
+        function resizeCanvas() {
+            const rect = els.canvasWrap.getBoundingClientRect();
+            canvasSize = Math.floor(Math.min(rect.width, rect.height));
+            dpr = window.devicePixelRatio || 1;
+            els.canvas.width = canvasSize * dpr;
+            els.canvas.height = canvasSize * dpr;
+            els.canvas.style.width = `${canvasSize}px`;
+            els.canvas.style.height = `${canvasSize}px`;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
+
+        function updateMoonNow(force = false) {
+            const now = Date.now();
+            if (!force && now - state.lastMoonCalcTime < 1000 && state.moon) return;
+            state.lastMoonCalcTime = now;
+            state.moon = computeMoonData(new Date(now), state.lat, state.lng);
+
+            // 更新底部月亮數據
+            const m = state.moon;
+            els.valMoonAz.textContent = `${m.azimuthDeg.toFixed(1)}°`;
+            els.valMoonDir.textContent = getCardinal16(m.azimuthDeg);
+
+            const altSign = m.altitudeDeg >= 0 ? '+' : '';
+            els.valMoonAlt.textContent = `${altSign}${m.altitudeDeg.toFixed(1)}°`;
+            els.valMoonVis.textContent = m.altitudeDeg >= 0 ? '地平線上' : '地平線下';
+            els.valMoonVis.className = m.altitudeDeg >= 0 ? 'text-xs text-zinc-400' : 'text-xs text-zinc-600';
+
+            const pct = Math.round(m.illumination * 100);
+            const distWan = (m.distanceKm / 10000).toFixed(1);
+            els.valMoonPhase.textContent = `${m.phaseName} ${pct}% · ${distWan}萬 km`;
+        }
+
+        function renderLoop() {
+            updateMoonNow(false);
+
+            const m = state.moon;
+            const R = state.rotMatrix;
+
+            // 月亮與天頂在世界 ENU 座標中的向量
+            const moonWorld = azAltToENU(m.azimuthDeg, m.altitudeDeg);
+            const upWorld = [0, 0, 1];
+
+            // 轉換至手機座標系
+            const targetMoonDev = worldToDevice(R, moonWorld);
+            const targetUpDev = worldToDevice(R, upWorld);
+
+            // 指數移動平滑（避免磁力計細微雜訊）
+            const smoothFactor = state.sensorActive ? 0.22 : 0.45;
+            for (let i = 0; i < 3; i++) {
+                state.smoothMoonDev[i] += (targetMoonDev[i] - state.smoothMoonDev[i]) * smoothFactor;
+                state.smoothUpDev[i] += (targetUpDev[i] - state.smoothUpDev[i]) * smoothFactor;
+            }
+            const moonDev = normalizeVec(state.smoothMoonDev);
+            const upDev = normalizeVec(state.smoothUpDev);
+
+            // 計算手機目前的方位角與仰角
+            // 對準模式看 -Z（背面指向），羅盤模式平放時看 +Y（頂部指向）
+            const aimWorld = [-R[2], -R[5], -R[8]]; // 背面 -Z 在世界座標中的方向
+            const topWorld = [R[1], R[4], R[7]];    // 頂部 +Y 在世界座標中的方向
+
+            let rawHeadingRad;
+            let devicePitchDeg;
+            if (state.mode === 'compass' && Math.abs(R[8]) > 0.5) {
+                rawHeadingRad = Math.atan2(topWorld[0], topWorld[1]);
+                devicePitchDeg = Math.asin(Math.max(-1, Math.min(1, aimWorld[2]))) * DEG;
+            } else {
+                rawHeadingRad = Math.atan2(aimWorld[0], aimWorld[1]);
+                devicePitchDeg = Math.asin(Math.max(-1, Math.min(1, aimWorld[2]))) * DEG;
+            }
+
+            // 平滑方位角（處理 0/360 邊界）
+            const hDiff = wrapAngleRad(rawHeadingRad - state.smoothHeadingRad);
+            state.smoothHeadingRad = wrapAngleRad(state.smoothHeadingRad + hDiff * smoothFactor);
+            const deviceAzDeg = ((state.smoothHeadingRad * DEG) % 360 + 360) % 360;
+
+            // 更新手機指向讀數
+            const pitchSign = devicePitchDeg >= 0 ? '+' : '';
+            els.valDeviceAim.textContent = `${Math.round(deviceAzDeg)}° ${getCardinal16(deviceAzDeg)} / ${pitchSign}${Math.round(devicePitchDeg)}°`;
+
+            // 更新次要狀態列（保留錯誤與 Safari 權限診斷訊息，不再強行覆寫）
+            if (state.sensorActive) {
+                els.subStatus.textContent = `${state.sensorModeLabel} · ${state.locationSource}`;
+            } else if (state.statusMessage) {
+                els.subStatus.textContent = state.statusMessage;
+            } else {
+                els.subStatus.textContent = `拖曳圓盤模擬方向 · ${state.locationSource}`;
+            }
+
+            if (els.modalSensorDiag) {
+                els.modalSensorDiag.textContent = state.lastDiag;
+            }
+
+            requestAnimationFrame(renderLoop);
+        }
+
+        /**
+         * 繪製「對準模式」（舉起手機背面朝向天空）
+         */
+        function drawAimMode(moonDev, upDev, deviceAzDeg, devicePitchDeg, moon) {
+            const cx = canvasSize / 2;
+            const cy = canvasSize / 2;
+            const radius = canvasSize * 0.44;
+            const FOV_DEG = 45; // 圓盤半徑對應 45° 視角
+            const FOV_RAD = FOV_DEG * RAD;
+
+            // 月亮與中心準心 (-Z) 的夾角
+            const forwardDot = Math.max(-1, Math.min(1, -moonDev[2]));
+            const angleRad = Math.acos(forwardDot);
+            const angleDeg = angleRad * DEG;
+            const isAligned = angleDeg <= 5.0;
+
+            // 1. 外圈邊框與刻度
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.strokeStyle = isAligned ? '#22c55e' : '#27272a';
+            ctx.lineWidth = isAligned ? 1.5 : 1;
+            ctx.stroke();
+
+            // 細緻外圈刻度（每 15°）
+            for (let i = 0; i < 24; i++) {
+                const a = (i * 15) * RAD;
+                const tickLen = (i % 6 === 0) ? 7 : 3.5;
+                ctx.beginPath();
+                ctx.moveTo(cx + Math.cos(a) * (radius - tickLen), cy + Math.sin(a) * (radius - tickLen));
+                ctx.lineTo(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius);
+                ctx.strokeStyle = (i % 6 === 0) ? '#3f3f46' : '#18181b';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            // 2. 圓盤內部裁切區（繪製地平線與視角參考圈）
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius - 1, 0, Math.PI * 2);
+            ctx.clip();
+
+            // 內部 22.5° 參考虛線圈
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius * 0.5, 0, Math.PI * 2);
+            ctx.setLineDash([2, 4]);
+            ctx.strokeStyle = '#18181b';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 繪製即時地平線（依據重力/天頂向量計算傾角與偏移）
+            const pitchRad = Math.asin(Math.max(-1, Math.min(1, -upDev[2])));
+            const ux = upDev[0];
+            const uy = -upDev[1]; // Canvas Y 向下，裝置 Y 向上
+            const uLen = Math.hypot(ux, uy);
+
+            if (uLen > 0.02) {
+                const nx = ux / uLen; // 畫面上「上方」的單位向量
+                const ny = uy / uLen;
+                // 地平線切線向量（與上方垂直）
+                const tx = -ny;
+                const ty = nx;
+                // 視線仰角越高，地平線越往下移（往 -up 方向移動）
+                const offsetPx = (pitchRad / FOV_RAD) * radius;
+                const hx = cx - nx * offsetPx;
+                const hy = cy - ny * offsetPx;
+
+                ctx.beginPath();
+                ctx.moveTo(hx - tx * radius * 2, hy - ty * radius * 2);
+                ctx.lineTo(hx + tx * radius * 2, hy + ty * radius * 2);
+                ctx.setLineDash([4, 4]);
+                ctx.strokeStyle = '#3f3f46';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // 若地平線在圓盤可視範圍內，標示微小的「地平線」字樣
+                if (Math.abs(offsetPx) < radius - 18) {
+                    ctx.save();
+                    ctx.translate(hx, hy);
+                    ctx.rotate(Math.atan2(ty, tx));
+                    ctx.fillStyle = '#52525b';
+                    ctx.font = '10px Inter, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('地平線', 0, -5);
+                    ctx.restore();
+                }
+            }
+
+            // 3. 中央準心（代表手機背面指向）
+            const crossColor = isAligned ? '#22c55e' : '#52525b';
+            const gap = 7;
+            const arm = 16;
+            ctx.strokeStyle = crossColor;
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(cx - arm, cy); ctx.lineTo(cx - gap, cy);
+            ctx.moveTo(cx + gap, cy); ctx.lineTo(cx + arm, cy);
+            ctx.moveTo(cx, cy - arm); ctx.lineTo(cx, cy - gap);
+            ctx.moveTo(cx, cy + gap); ctx.lineTo(cx, cy + arm);
+            ctx.stroke();
+
+            // 4. 繪製月亮目標點（在視野範圍內）
+            const projX = moonDev[0];
+            const projY = -moonDev[1]; // Canvas Y 向下
+            const projLen = Math.hypot(projX, projY);
+            const dirX = projLen > 1e-5 ? projX / projLen : 0;
+            const dirY = projLen > 1e-5 ? projY / projLen : -1;
+
+            if (angleRad <= FOV_RAD) {
+                const distPx = (angleRad / FOV_RAD) * radius;
+                const mx = cx + dirX * distPx;
+                const my = cy + dirY * distPx;
+                const isAbove = moon.altitudeDeg >= 0;
+
+                // 外定位環
+                ctx.beginPath();
+                ctx.arc(mx, my, 13, 0, Math.PI * 2);
+                if (!isAbove) ctx.setLineDash([3, 3]);
+                ctx.strokeStyle = isAligned ? '#22c55e' : (isAbove ? '#a1a1aa' : '#52525b');
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // 月亮本體圓點
+                ctx.beginPath();
+                ctx.arc(mx, my, 5.5, 0, Math.PI * 2);
+                if (isAbove) {
+                    ctx.fillStyle = isAligned ? '#4ade80' : '#f4f4f5';
+                    ctx.fill();
+                } else {
+                    ctx.strokeStyle = '#71717a';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                }
+            }
+
+            ctx.restore(); // 結束圓盤裁切
+
+            // 5. 若月亮在視野外（> 45°），於圓盤邊緣繪製極簡指向箭頭與角度差
+            if (angleRad > FOV_RAD) {
+                const isAbove = moon.altitudeDeg >= 0;
+                const edgeR = radius + 6;
+                const tipX = cx + dirX * (edgeR + 7);
+                const tipY = cy + dirY * (edgeR + 7);
+                const baseAngle = Math.atan2(dirY, dirX);
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(
+                    cx + Math.cos(baseAngle - 0.08) * (edgeR - 2),
+                    cy + Math.sin(baseAngle - 0.08) * (edgeR - 2)
+                );
+                ctx.lineTo(
+                    cx + Math.cos(baseAngle + 0.08) * (edgeR - 2),
+                    cy + Math.sin(baseAngle + 0.08) * (edgeR - 2)
+                );
+                ctx.closePath();
+                ctx.fillStyle = isAbove ? '#e4e4e7' : '#52525b';
+                ctx.fill();
+
+                // 邊緣內側顯示剩餘夾角
+                const textR = radius - 22;
+                ctx.fillStyle = isAbove ? '#a1a1aa' : '#52525b';
+                ctx.font = '11px "JetBrains Mono", monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`${Math.round(angleDeg)}°`, cx + dirX * textR, cy + dirY * textR);
+                ctx.restore();
+            }
+
+            // 6. 更新簡潔文字引導
+            if (isAligned) {
+                els.guidanceText.textContent = moon.altitudeDeg >= 0
+                    ? '已對準月亮'
+                    : `已對準方向（月亮於地平線下 ${Math.abs(moon.altitudeDeg).toFixed(0)}°）`;
+                els.guidanceText.className = 'text-sm font-mono-num tracking-wide text-emerald-400';
+            } else {
+                const dAz = wrapAngleDeg180(moon.azimuthDeg - deviceAzDeg);
+                const dAlt = moon.altitudeDeg - devicePitchDeg;
+
+                const parts = [];
+                if (Math.abs(dAz) >= 4) {
+                    parts.push(`${dAz > 0 ? '向右轉' : '向左轉'} ${Math.abs(Math.round(dAz))}°`);
+                }
+                if (Math.abs(dAlt) >= 4) {
+                    parts.push(`${dAlt > 0 ? '抬高' : '壓低'} ${Math.abs(Math.round(dAlt))}°`);
+                }
+                if (parts.length === 0) {
+                    parts.push(`微調 ${Math.round(angleDeg)}°`);
+                }
+                els.guidanceText.textContent = parts.join(' · ');
+                els.guidanceText.className = moon.altitudeDeg >= 0
+                    ? 'text-sm font-mono-num tracking-wide text-zinc-200'
+                    : 'text-sm font-mono-num tracking-wide text-zinc-500';
+            }
+        }
+
+        /**
+         * 繪製「羅盤模式」（平放手機，極座標天球投影：外圈=地平線 0°，圓心=天頂 90°）
+         */
+        function drawCompassMode(deviceAzDeg, moon) {
+            const cx = canvasSize / 2;
+            const cy = canvasSize / 2;
+            const radius = canvasSize * 0.41;
+
+            // 1. 頂部固定指北針基準線（代表手機頂端指向）
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - radius - 14);
+            ctx.lineTo(cx, cy - radius - 3);
+            ctx.strokeStyle = '#e4e4e7';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // 2. 同心圓（0° 地平線、45° 仰角圈、天頂十字）
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            ctx.strokeStyle = '#27272a';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius * 0.5, 0, Math.PI * 2);
+            ctx.setLineDash([2, 4]);
+            ctx.strokeStyle = '#18181b';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 中心天頂微十字
+            ctx.beginPath();
+            ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy);
+            ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5);
+            ctx.strokeStyle = '#3f3f46';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // 3. 隨手機方位旋轉的刻度與四方位字樣
+            const cardinals = [
+                { deg: 0, label: '北', primary: true },
+                { deg: 90, label: '東', primary: false },
+                { deg: 180, label: '南', primary: false },
+                { deg: 270, label: '西', primary: false }
+            ];
+
+            for (let deg = 0; deg < 360; deg += 15) {
+                const a = (deg - deviceAzDeg - 90) * RAD;
+                const isMajor = deg % 90 === 0;
+                const len = isMajor ? 8 : 4;
+                ctx.beginPath();
+                ctx.moveTo(cx + Math.cos(a) * (radius - len), cy + Math.sin(a) * (radius - len));
+                ctx.lineTo(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius);
+                ctx.strokeStyle = isMajor ? '#52525b' : '#27272a';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            ctx.font = '12px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            cardinals.forEach(c => {
+                const a = (c.deg - deviceAzDeg - 90) * RAD;
+                const rText = radius + 14;
+                ctx.fillStyle = c.primary ? '#f4f4f5' : '#71717a';
+                ctx.fillText(c.label, cx + Math.cos(a) * rText, cy + Math.sin(a) * rText);
+            });
+
+            // 4. 月亮在極座標天球上的位置
+            const moonAngle = (moon.azimuthDeg - deviceAzDeg - 90) * RAD;
+            const isAbove = moon.altitudeDeg >= 0;
+            const moonR = isAbove
+                ? (1 - Math.min(90, moon.altitudeDeg) / 90) * radius
+                : radius;
+
+            const mx = cx + Math.cos(moonAngle) * moonR;
+            const my = cy + Math.sin(moonAngle) * moonR;
+
+            // 從圓心連至月亮方位的極細輔助線
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(cx + Math.cos(moonAngle) * radius, cy + Math.sin(moonAngle) * radius);
+            ctx.setLineDash([3, 4]);
+            ctx.strokeStyle = isAbove ? '#3f3f46' : '#18181b';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 月亮標記
+            const dAz = wrapAngleDeg180(moon.azimuthDeg - deviceAzDeg);
+            const isAligned = Math.abs(dAz) <= 5;
+
+            ctx.beginPath();
+            ctx.arc(mx, my, 11, 0, Math.PI * 2);
+            if (!isAbove) ctx.setLineDash([2, 3]);
+            ctx.strokeStyle = isAligned ? '#22c55e' : (isAbove ? '#a1a1aa' : '#52525b');
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.beginPath();
+            ctx.arc(mx, my, 5, 0, Math.PI * 2);
+            if (isAbove) {
+                ctx.fillStyle = isAligned ? '#4ade80' : '#f4f4f5';
+                ctx.fill();
+            } else {
+                ctx.strokeStyle = '#71717a';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
+
+            // 5. 文字引導
+            if (isAligned) {
+                els.guidanceText.textContent = isAbove
+                    ? `方位已對準 · 仰角 +${moon.altitudeDeg.toFixed(0)}°`
+                    : `方位已對準 · 地平線下 ${Math.abs(moon.altitudeDeg).toFixed(0)}°`;
+                els.guidanceText.className = 'text-sm font-mono-num tracking-wide text-emerald-400';
+            } else {
+                const turnText = dAz > 0 ? `順時針轉 ${Math.round(dAz)}°` : `逆時針轉 ${Math.abs(Math.round(dAz))}°`;
+                const altText = isAbove ? `仰角 +${moon.altitudeDeg.toFixed(0)}°` : '地平線下';
+                els.guidanceText.textContent = `${turnText} · ${altText}`;
+                els.guidanceText.className = isAbove
+                    ? 'text-sm font-mono-num tracking-wide text-zinc-200'
+                    : 'text-sm font-mono-num tracking-wide text-zinc-500';
+            }
+        }
+
+        /**
+         * ==========================================
+         * 7. 事件綁定與初始化
+         * ==========================================
+         */
+        function setMode(mode) {
+            state.mode = mode;
+            if (mode === 'aim') {
+                els.btnModeAim.className = 'px-2.5 py-1.5 rounded-md bg-zinc-800 text-zinc-100 font-medium transition-colors';
+                els.btnModeCompass.className = 'px-2.5 py-1.5 rounded-md text-zinc-500 hover:text-zinc-300 transition-colors';
+            } else {
+                els.btnModeCompass.className = 'px-2.5 py-1.5 rounded-md bg-zinc-800 text-zinc-100 font-medium transition-colors';
+                els.btnModeAim.className = 'px-2.5 py-1.5 rounded-md text-zinc-500 hover:text-zinc-300 transition-colors';
+            }
+        }
+
+        function initApp() {
+            loadSettings();
+            resizeCanvas();
+            updateMoonNow(true);
+            updateSimulatedMatrix();
+
+            // 模式切換
+            els.btnModeAim.addEventListener('click', () => setMode('aim'));
+            els.btnModeCompass.addEventListener('click', () => setMode('compass'));
+
+            // 啟動感測器與定位
+            els.btnStartSensors.addEventListener('click', startSensorsAndLocation);
+
+            // 設定彈窗控制
+            els.btnOpenSettings.addEventListener('click', () => {
+                els.inputLat.value = state.lat.toFixed(4);
+                els.inputLng.value = state.lng.toFixed(4);
+                els.settingsModal.classList.remove('hidden');
+            });
+
+            els.btnCloseSettings.addEventListener('click', () => {
+                els.settingsModal.classList.add('hidden');
+            });
+
+            els.settingsModal.addEventListener('click', (e) => {
+                if (e.target === els.settingsModal) {
+                    els.settingsModal.classList.add('hidden');
+                }
+            });
+
+            els.btnRefreshGps.addEventListener('click', requestGPS);
+
+            els.inputOffset.addEventListener('input', (e) => {
+                state.manualOffsetDeg = parseInt(e.target.value, 10) || 0;
+                els.valOffsetLabel.textContent = `${state.manualOffsetDeg > 0 ? '+' : ''}${state.manualOffsetDeg}°`;
+                saveSettings();
+            });
+
+            els.btnApplySettings.addEventListener('click', () => {
+                const lat = parseFloat(els.inputLat.value);
+                const lng = parseFloat(els.inputLng.value);
+                if (!isNaN(lat) && lat >= -90 && lat <= 90 && !isNaN(lng) && lng >= -180 && lng <= 180) {
+                    state.lat = lat;
+                    state.lng = lng;
+                    state.locationSource = '手動座標';
+                    saveSettings();
+                    updateLocationUI('手動座標');
+                    updateMoonNow(true);
+                    els.settingsModal.classList.add('hidden');
+                } else {
+                    els.modalGpsStatus.textContent = '請輸入有效的經緯度範圍';
+                }
+            });
+
+            // 畫布滑鼠與觸控拖曳（無感測器時供測試預覽）
+            els.canvas.addEventListener('mousedown', onPointerDown);
+            window.addEventListener('mousemove', onPointerMove);
+            window.addEventListener('mouseup', onPointerUp);
+
+            els.canvas.addEventListener('touchstart', onPointerDown, { passive: true });
+            window.addEventListener('touchmove', onPointerMove, { passive: true });
+            window.addEventListener('touchend', onPointerUp);
+
+            window.addEventListener('resize', resizeCanvas);
+
+            // 啟動繪製迴圈
+            requestAnimationFrame(renderLoop);
+        }
+
+        window.onload = initApp;
+    </script>
+</body>
+</html>
